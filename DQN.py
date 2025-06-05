@@ -159,10 +159,27 @@ class DQN:
         # 6. compute loss between current Q and target Q
         # 7. backprop
         # ====================================
-        raise NotImplementedError("optimize_model func in DQN class not implemented")
-    
+        if len(self.replay_buffer) < self.batch_size:
+          return False, 0
 
+        states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size, device=self.device)
 
+        q_values = self.model(states)   
+        q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1) 
+
+        with torch.no_grad():
+            next_q_values = self.model(next_states) 
+            max_next_q_values = next_q_values.max(1)[0]
+            
+            target_q_values = rewards + self.gamma * max_next_q_values * (~dones)
+
+        loss = self.loss_fn(q_values, target_q_values)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        return True, loss.item()
         # ========== YOUR CODE ENDS ==========
             
     def _sample_action(self, state:np.ndarray
@@ -183,7 +200,13 @@ class DQN:
         #  - if probability epsilon: random action
         #  - else: greedy action
         # ====================================
-        raise NotImplementedError("sample_action func in DQN class not implemented")
+        if random.random() < epsilon:
+            index = self.env.action_space.sample()
+        else:
+            state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)  # (1, C, H, W)
+            with torch.no_grad():
+                q_values = self.model(state_tensor)  # (1, num_actions)
+            index = torch.argmax(q_values, dim=1).item()
     
 
 
@@ -278,10 +301,11 @@ class HardUpdateDQN(DQN):
         # TODO:
         # fill in the initialization and synchronization of the target model weights
         # ====================================
-        raise NotImplementedError("HardUpdateDQN class not implemented")
-    
+        self.target_model = model(self.observation_space, self.env.action_space.n, **model_kwargs).to(self.device)
+        self.target_model.eval()  # We don't need to train the target model
+        self.update_freq = update_freq
 
-
+        self._update_model()    
         # ========== YOUR CODE ENDS ==========
         
     def _optimize_model(self):
@@ -296,10 +320,28 @@ class HardUpdateDQN(DQN):
         # hint: you can copy over most of the code from the parent class
         # and only change one line
         # ====================================
-        raise NotImplementedError("optimize_model func in HardUpdateDQN class not implemented")     
-    
+        if len(self.replay_buffer) < self.batch_size:
+            return False, 0
 
+        states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size, device=self.device)
 
+        q_values = self.model(states)
+        q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
+
+        with torch.no_grad():
+            next_q_values = self.target_model(next_states)
+            max_next_q_values = next_q_values.max(1)[0]
+            target_q_values = rewards + self.gamma * max_next_q_values * (~dones)
+
+        loss = self.loss_fn(q_values, target_q_values)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        self._update_model()
+
+        return True, loss.item()   
         # ========== YOUR CODE ENDS ==========
 
     def _update_model(self):
